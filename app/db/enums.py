@@ -20,6 +20,7 @@ class DocumentStatus(StrEnum):
     UPLOADED = "uploaded"
     QUEUED = "queued"
     PROCESSING = "processing"
+    PROCESSED = "processed"
     COMPLETED = "completed"
     FAILED = "failed"
     QUARANTINED = "quarantined"

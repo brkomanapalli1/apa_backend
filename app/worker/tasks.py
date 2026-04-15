@@ -1,9 +1,9 @@
 from app.db.session import SessionLocal
-from app.models.document import Document
+from app.models.document import Document,DocumentStatus
 from app.services.document_service import DocumentService
 from app.services.email_service import EmailService
 from app.services.reminder_service import ReminderService
-from app.worker import celery_app
+from app.celery_app import celery_app
 
 
 @celery_app.task(bind=True)
@@ -12,15 +12,26 @@ def process_document_task(self, document_id: int) -> dict:
     try:
         document = db.query(Document).filter(Document.id == document_id).first()
         if not document:
-            return {'ok': False, 'message': 'Document not found'}
+            return {"ok": False, "message": "Document not found"}
+
         service = DocumentService()
         service.process_document(db, document)
-        return {'ok': True, 'document_id': document_id}
+        return {"ok": True, "document_id": document_id}
+
     except Exception as exc:
+        db.rollback()
         document = db.query(Document).filter(Document.id == document_id).first()
         if document:
-          DocumentService().mark_failed(db, document, str(exc))
+            document.status = DocumentStatus.FAILED
+            document.processing_metadata = {
+                **(document.processing_metadata or {}),
+                "error": str(exc),
+                "mode": "celery",
+            }
+            db.add(document)
+            db.commit()
         raise
+
     finally:
         db.close()
 

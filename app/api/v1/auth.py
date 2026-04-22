@@ -290,3 +290,31 @@ def google_sso_callback(code: str, state: str, request: Request, db: Session = D
 @router.get('/me', response_model=UserResponse)
 def me(current_user: User = Depends(get_current_user)):
     return current_user
+
+
+@router.post('/push-token')
+def register_push_token(
+    payload: dict,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Register or update Expo push token for the current user."""
+    token = payload.get("push_token", "").strip()
+    if not token:
+        raise HTTPException(status_code=400, detail="push_token is required")
+    current_user.push_token = token
+    db.add(current_user)
+    db.commit()
+    return {"ok": True, "push_token": token}
+
+
+@router.delete('/push-token')
+def unregister_push_token(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove push token (on logout)."""
+    current_user.push_token = None
+    db.add(current_user)
+    db.commit()
+    return {"ok": True}

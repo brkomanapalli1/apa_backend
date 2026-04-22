@@ -1,0 +1,98 @@
+version: "3.9"
+# ─────────────────────────────────────────────────────────────────────────────
+#  APA Backend — LOCAL DEVELOPMENT docker-compose
+#
+#  This file is for LOCAL development ONLY.
+#  It starts only the infrastructure dependencies (postgres, redis, minio, clamav).
+#  The FastAPI app and Celery workers run OUTSIDE Docker (on your machine)
+#  so you get hot-reload and easy debugging.
+#
+#  Usage:
+#    docker compose up -d          # start infrastructure
+#    docker compose down           # stop infrastructure
+#    docker compose down -v        # stop + wipe all data
+#
+#  Then in a separate terminal:
+#    uvicorn app.main:app --reload --port 8000
+#
+#  For staging/prod: each service deploys to AWS independently.
+#  See /infra/aws/ for ECS task definitions and Terraform.
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: apa-postgres-local
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: paperwork_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-localdev123}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d paperwork_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: apa-redis-local
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: apa-minio-local
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"   # MinIO console: http://localhost:9001
+
+  minio-setup:
+    image: minio/mc:latest
+    container_name: apa-minio-setup
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "
+      sleep 5;
+      mc alias set local http://minio:9000 minioadmin minioadmin;
+      mc mb --ignore-existing local/documents;
+      mc anonymous set none local/documents;
+      echo 'MinIO bucket ready';
+      "
+
+  clamav:
+    image: clamav/clamav:stable
+    container_name: apa-clamav-local
+    restart: unless-stopped
+    volumes:
+      - clamav_db:/var/lib/clamav
+    ports:
+      - "3310:3310"
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+  clamav_db:

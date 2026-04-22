@@ -79,12 +79,46 @@ class DocumentService:
             heuristic = analyze_document(text, document.name)
             llm_result = analyze_document_with_llm(text, document.name)
             if llm_result:
-                # LLM wins for summary/letter; heuristic provides ui_summary fallback
+                # LLM wins for everything — summary, letter, deadlines, medications
                 phase1 = {**heuristic, **llm_result}
-                # Always keep the rich ui_summary from heuristic inside extracted_fields
-                if "extracted_fields" not in phase1 or not phase1["extracted_fields"].get("ui_summary"):
-                    phase1.setdefault("extracted_fields", {})
-                    phase1["extracted_fields"]["ui_summary"] = heuristic.get("extracted_fields", {}).get("ui_summary", {})
+
+                # Merge extracted_fields: LLM fields win, but add heuristic ui_summary
+                # only if LLM didn't provide a better one
+                merged_fields = {**heuristic.get("extracted_fields", {}),
+                                 **llm_result.get("extracted_fields", {})}
+
+                # Build a clean ui_summary from LLM data, not heuristic
+                # This prevents DOB being used as key date
+                llm_deadlines = llm_result.get("deadlines") or []
+                llm_fields = llm_result.get("extracted_fields") or {}
+                doc_type = llm_result.get("document_type", "unknown")
+
+                # Get best key date from LLM deadlines (skip DOB)
+                dob = llm_fields.get("date_of_birth", "")
+                key_date = None
+                for dl in llm_deadlines:
+                    dl_date = dl.get("date", "")
+                    if dl_date and dl_date != dob and "birth" not in dl.get("title","").lower():
+                        key_date = dl_date
+                        break
+
+                # Get heuristic ui_summary as base then fix key date
+                h_ui = heuristic.get("extracted_fields", {}).get("ui_summary", {})
+                if h_ui:
+                    h_ui["main_due_date"] = key_date  # replace DOB with real date
+                    if dob and h_ui.get("main_due_date") == dob:
+                        h_ui["main_due_date"] = None
+                    # Fix what_this_is using LLM summary
+                    if llm_result.get("summary"):
+                        h_ui["what_this_is"] = llm_result["summary"]
+
+                merged_fields["ui_summary"] = h_ui
+
+                # Keep medications from LLM
+                if llm_result.get("extracted_fields", {}).get("medications"):
+                    merged_fields["medications"] = llm_result["extracted_fields"]["medications"]
+
+                phase1["extracted_fields"] = merged_fields
                 phase1["analyzer"] = llm_result.get("analyzer", "llm+rules_v3")
             else:
                 phase1 = heuristic
@@ -115,6 +149,11 @@ class DocumentService:
         document.summary = phase1.get("summary")
         document.deadlines = deadlines
         document.document_type_confidence = phase1.get("document_type_confidence")
+        # Save medications from Claude into extracted_fields so frontend can display them
+        medications = phase1.get("medications") or []
+        if medications:
+            fields["medications"] = medications
+
         document.extracted_fields = fields
         document.recommended_actions = recs
         document.generated_letter = letter
@@ -136,8 +175,9 @@ class DocumentService:
                        detail={"document_type": str(document.document_type),
                                "malware_scan_status": str(document.malware_scan_status)})
 
-        # Post-process: reminders, notifications, push
-        self._post(db, document, deadlines)
+        # Post-process: reminders, notifications, push, medication reminders
+        medications = phase1.get("medications") or []
+        self._post(db, document, deadlines, medications)
         return document
 
     def _quarantine(self, db, document):
@@ -178,7 +218,7 @@ class DocumentService:
         logger.warning("Document %d failed: %s", document.id, reason)
         return document
 
-    def _post(self, db, document, deadlines):
+    def _post(self, db, document, deadlines, medications=None):
         for fn, label in [
             (lambda: self.reminders.sync_from_deadlines(db, user_id=document.owner_id,
                 document_id=document.id, deadlines=deadlines), "reminders"),
@@ -190,13 +230,107 @@ class DocumentService:
                 fn()
             except Exception as exc:
                 logger.warning("%s failed for doc=%d: %s", label, document.id, exc)
+
+        # Create medication reminders if prescriptions were found
+        if medications:
+            try:
+                self._create_medication_reminders(db, document, medications)
+            except Exception as exc:
+                logger.warning("Medication reminders failed for doc=%d: %s", document.id, exc)
+
         try:
             owner = db.get(User, document.owner_id)
             if owner:
-                self.notifications.send_push_if_available(owner, "Document ready",
-                                                           f"{document.name} is ready.")
+                med_count = len(medications) if medications else 0
+                msg = f"{document.name} is ready."
+                if med_count:
+                    msg += f" {med_count} medication(s) found."
+                self.notifications.send_push_if_available(owner, "Document ready", msg)
         except Exception as exc:
             logger.warning("Push failed for doc=%d: %s", document.id, exc)
+
+    def _create_medication_reminders(self, db, document, medications):
+        """Create daily reminders for each medication found in the document."""
+        from app.models.document import Reminder
+        from datetime import datetime, timezone
+
+        for med in medications or []:
+            name = med.get("name", "Medication")
+            dosage = med.get("dosage", "")
+            instructions = med.get("instructions", "")
+            reminder_times = med.get("reminder_times") or []
+            refill_date = med.get("refill_date")
+
+            # Create a reminder for each dose time
+            if reminder_times:
+                for t in reminder_times:
+                    title = f"Take {name} {dosage}".strip()
+                    existing = db.query(Reminder).filter(
+                        Reminder.user_id == document.owner_id,
+                        Reminder.document_id == document.id,
+                        Reminder.title == title,
+                    ).first()
+                    if not existing:
+                        db.add(Reminder(
+                            user_id=document.owner_id,
+                            document_id=document.id,
+                            title=title,
+                            due_at=None,  # medication reminders fire daily, not on a fixed date
+                            payload={
+                                "type": "medication",
+                                "medication": name,
+                                "dosage": dosage,
+                                "instructions": instructions,
+                                "reminder_time": t,
+                            }
+                        ))
+            else:
+                # No specific times — create one general reminder
+                title = f"Take {name} {dosage}".strip()
+                existing = db.query(Reminder).filter(
+                    Reminder.user_id == document.owner_id,
+                    Reminder.document_id == document.id,
+                    Reminder.title == title,
+                ).first()
+                if not existing:
+                    db.add(Reminder(
+                        user_id=document.owner_id,
+                        document_id=document.id,
+                        title=title,
+                        due_at=None,
+                        payload={
+                            "type": "medication",
+                            "medication": name,
+                            "dosage": dosage,
+                            "instructions": instructions,
+                        }
+                    ))
+
+            # Create a refill reminder if refill date exists
+            if refill_date:
+                refill_title = f"Refill {name}"
+                parsed_refill = None
+                try:
+                    from app.services.reminder_service import ReminderService
+                    parsed_refill = ReminderService._parse_date(refill_date)
+                except Exception:
+                    pass
+                existing = db.query(Reminder).filter(
+                    Reminder.user_id == document.owner_id,
+                    Reminder.document_id == document.id,
+                    Reminder.title == refill_title,
+                ).first()
+                if not existing:
+                    db.add(Reminder(
+                        user_id=document.owner_id,
+                        document_id=document.id,
+                        title=refill_title,
+                        due_at=parsed_refill,
+                        payload={"type": "medication_refill", "medication": name}
+                    ))
+
+        db.commit()
+        logger.info("Created medication reminders for doc=%d (%d meds)", document.id, len(medications))
 
     @staticmethod
     def _sha256(content: bytes) -> str:

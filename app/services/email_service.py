@@ -1,9 +1,10 @@
 from __future__ import annotations
-
+import logging
 import smtplib
 from email.message import EmailMessage
-
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class EmailService:
@@ -11,20 +12,51 @@ class EmailService:
         return bool(settings.SMTP_HOST and settings.SMTP_FROM)
 
     def send_email(self, *, to: str, subject: str, html: str, text: str | None = None) -> bool:
+        """Send a single email. Returns True on success."""
         if not self.is_configured():
+            logger.debug("Email skipped — SMTP not configured")
+            return False
+        try:
+            msg = EmailMessage()
+            msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM}>"
+            msg["To"] = to
+            msg["Subject"] = subject
+            msg.set_content(text or "Please view this email in an HTML-capable client.")
+            msg.add_alternative(html, subtype="html")
+            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as smtp:
+                if settings.SMTP_STARTTLS:
+                    smtp.starttls()
+                if settings.SMTP_USER and settings.SMTP_PASSWORD:
+                    smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
+                smtp.send_message(msg)
+            logger.info("Email sent to %s: %s", to, subject)
+            return True
+        except Exception as exc:
+            logger.error("Email to %s failed: %s", to, exc)
             return False
 
-        message = EmailMessage()
-        message['From'] = settings.SMTP_FROM
-        message['To'] = to
-        message['Subject'] = subject
-        message.set_content(text or 'Please view this email in an HTML-capable client.')
-        message.add_alternative(html, subtype='html')
-
-        with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as smtp:
-            if settings.SMTP_STARTTLS:
-                smtp.starttls()
-            if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-            smtp.send_message(message)
-        return True
+    def send_caregiver_invitation(
+        self, to: str, inviter_name: str, role: str,
+        personal_message: str | None, invitation_token: str,
+    ) -> bool:
+        accept_url = f"{settings.FRONTEND_URL}/invitations/accept/{invitation_token}"
+        html = f"""
+        <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;padding:20px">
+          <div style="background:#7c3aed;color:white;padding:20px;border-radius:12px 12px 0 0">
+            <h1 style="margin:0;font-size:20px">You've been invited to help!</h1>
+          </div>
+          <div style="background:#f5f3ff;padding:20px;border-radius:0 0 12px 12px;border:1px solid #ddd6fe">
+            <p style="color:#374151;font-size:16px"><strong>{inviter_name}</strong> has invited you
+            to help manage their paperwork as a <strong>{role}</strong>.</p>
+            {f'<p style="color:#6b7280;font-style:italic">&ldquo;{personal_message}&rdquo;</p>' if personal_message else ""}
+            <div style="margin:20px 0;text-align:center">
+              <a href="{accept_url}" style="background:#7c3aed;color:white;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px">Accept Invitation</a>
+            </div>
+            <p style="color:#9ca3af;font-size:12px">As a <strong>{role}</strong>, you will be able to
+            help {inviter_name} understand and manage important paperwork using AI assistance.</p>
+          </div>
+        </div>"""
+        return self.send_email(
+            to=to, subject=f"{inviter_name} invited you to AI Paperwork Assistant",
+            html=html, text=f"{inviter_name} invited you as {role}. Accept: {accept_url}",
+        )

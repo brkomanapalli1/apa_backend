@@ -69,6 +69,39 @@ def create_presigned_upload(payload: PresignedUploadRequest, request: Request, d
     return PresignedUploadResponse(upload_url=upload_url, document_id=document.id, storage_key=storage_key, expires_in=settings.PRESIGNED_UPLOAD_EXPIRE_SECONDS, headers={'Content-Type': payload.mime_type})
 
 
+@router.post('/direct-upload')
+async def direct_upload(
+    request: Request,
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Mobile-friendly upload endpoint.
+    Accepts file bytes directly and stores to MinIO internally.
+    Avoids the issue where mobile phones cannot reach localhost:9000 (MinIO).
+    """
+    from app.models.document import Document
+    doc = db.get(Document, document_id)
+    if not doc or doc.owner_id != current_user.id:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="No file data received")
+
+    # Upload directly to MinIO using internal client
+    import io
+    content_type = request.headers.get("content-type", "application/octet-stream")
+    storage.client.upload_fileobj(
+        io.BytesIO(body),
+        settings.MINIO_BUCKET,
+        doc.storage_key,
+        ExtraArgs={"ContentType": content_type},
+    )
+    return {"ok": True, "document_id": document_id}
+
+
 @router.post('/complete-upload', response_model=JobStatusResponse)
 def complete_upload(payload: CompleteUploadRequest, request: Request, db: Session = Depends(get_db), current_user: User = Depends(get_current_user)):
     doc = access.assert_can_edit(db, _get_doc(db, payload.document_id), current_user)

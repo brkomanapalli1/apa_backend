@@ -28,12 +28,14 @@ class ParseResult(dict):
 
 SUPPORTED_EXTENSIONS = {
     '.pdf', '.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.bmp',
+    '.heic', '.heif',
     '.doc', '.docx', '.xls', '.xlsx', '.csv', '.txt'
 }
 
 SUPPORTED_MIME_TYPES = {
     'application/pdf',
     'image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/tiff', 'image/bmp',
+    'image/heic', 'image/heif',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/msword',
     'application/vnd.ms-excel',

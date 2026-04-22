@@ -122,12 +122,11 @@ _TYPE_RULES: list[tuple[str, float, list[list[str]]]] = [
     ("claim_denial_letter",        0.93, [["claim denied", "denial", "adverse determination", "not medically necessary", "appeal rights"]]),
     ("prescription_drug_notice",   0.90, [["formulary", "prior authorization", "part d", "prescription drug plan"]]),
     ("medicaid_notice",            0.88, [["medicaid", "renew your benefits", "coverage ending", "eligibility notice"]]),
+    # ── Utility (checked BEFORE generic government notices — utility keywords are unambiguous) ──
+    ("electricity_bill",           0.93, [["kilowatt", "kwh", "kw demand", "electric service", "power service", "energy charge", "electricity service", "electric bill", "current charges", "distribution charge", "transmission charge", "oncor", "coserv", "tnmp", "aep texas", "centerpoint energy", "txu energy", "reliant energy", "green mountain energy", "direct energy", "energy usage", "meter reading", "electric utility", "billing period", "service address", "texreg"]]),
+    ("natural_gas_bill",           0.92, [["therms", "ccf", "natural gas", "gas service", "gas distribution", "atmos", "centerpoint energy"]]),
     ("social_security_notice",     0.92, [["social security", "ssa.gov", "benefit payment", "supplemental security income", "ssi"]]),
     ("veterans_benefits_letter",   0.91, [["department of veterans affairs", "va.gov", "va benefits", "veterans administration"]]),
-
-    # ── Utility ──────────────────────────────────────────────────────────
-    ("electricity_bill",           0.93, [["kilowatt", "kwh", "kw demand", "electric service", "power service", "energy charge"]]),
-    ("natural_gas_bill",           0.92, [["therms", "ccf", "natural gas", "gas service", "gas distribution", "atmos", "centerpoint energy"]]),
     ("water_sewer_bill",           0.91, [["water service", "sewer service", "gallons used", "water district", "water utility", "stormwater"]]),
     ("trash_recycling_bill",       0.88, [["waste management", "refuse collection", "recycling service", "trash pickup", "rubbish"]]),
     ("telecom_bill",               0.90, [["monthly service charge", "data plan", "internet service", "cable tv", "streaming service", "phone service", "wireless"]]),
@@ -1034,6 +1033,8 @@ def build_senior_view(
     payment_status, payment_message = build_payment_guidance(doc_type, fields)
 
     # Best due date across all possible field names
+    # NEVER use date_of_birth as a key date
+    _dob = fields.get("date_of_birth", "")
     main_due_date = (
         fields.get("due_date")
         or fields.get("renewal_due_date")
@@ -1043,8 +1044,16 @@ def build_senior_view(
         or fields.get("response_deadline")
         or fields.get("next_payment_date")
     )
+    # Filter out DOB from deadlines before using as fallback
     if not main_due_date and deadlines:
-        main_due_date = deadlines[0].get("date")
+        for dl in deadlines:
+            dl_date = dl.get("date", "")
+            if dl_date and dl_date != _dob and "birth" not in dl.get("title", "").lower():
+                main_due_date = dl_date
+                break
+    # Final guard — if main_due_date matches DOB, clear it
+    if main_due_date and _dob and main_due_date == _dob:
+        main_due_date = None
 
     # Best primary amount across all possible field names
     main_amount = (

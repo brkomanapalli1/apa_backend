@@ -147,6 +147,15 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
+@app.get("/", tags=["ops"])
+def root():
+    return {
+        "app": "AI Paperwork Assistant",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/health",
+        "api": "/api/v1",
+    }
 
 # ── Operational endpoints ─────────────────────────────────────────────────
 

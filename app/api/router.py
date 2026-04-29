@@ -3,6 +3,7 @@ from app.api.v1 import (
     admin, audit, auth, billing, documents,
     invitations, notifications, reminders,
     caregiver, vault, analytics, voice,
+    renewals, preferences,
 )
 
 api_router = APIRouter()
@@ -21,6 +22,10 @@ api_router.include_router(admin.router,         prefix="/admin",         tags=["
 api_router.include_router(analytics.router,     prefix="/analytics",     tags=["analytics"])
 api_router.include_router(voice.router,         prefix="/voice",         tags=["voice"])
 
-# ── Phase 3: Caregiver + Vault ────────────────────────────────────────────
+# ── Phase 3: Caregiver + Vault + Renewals ─────────────────────────────────
 api_router.include_router(caregiver.router,     prefix="/caregiver",     tags=["caregiver"])
 api_router.include_router(vault.router,         prefix="/vault",         tags=["emergency-vault"])
+api_router.include_router(renewals.router,      prefix="/renewals",      tags=["renewals"])
+
+# ── Phase 5: User Preferences + Translation ───────────────────────────────
+api_router.include_router(preferences.router,   prefix="/preferences",   tags=["preferences"])

@@ -43,6 +43,7 @@ class User(Base):
     )
 
     profile: Mapped[dict] = mapped_column(JSONB, default=dict)
+    preferences: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[DateTime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

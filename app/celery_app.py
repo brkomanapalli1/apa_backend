@@ -16,3 +16,6 @@ celery_app.conf.update(
     enable_utc=True,
     broker_connection_retry_on_startup=True,
 )
+
+# Import tasks so beat schedule is registered
+import app.worker.tasks  # noqa

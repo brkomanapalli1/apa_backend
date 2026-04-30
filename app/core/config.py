@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", case_sensitive=True, extra="ignore")
 
+    MINIO_REGION: str = "us-east-1"
     # ── App ────────────────────────────────────────────────────────────────
     APP_NAME: str = "AI Paperwork Assistant"
     APP_VERSION: str = "1.0.0"

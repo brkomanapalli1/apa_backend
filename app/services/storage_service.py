@@ -11,27 +11,35 @@ from app.core.config import settings
 
 class StorageService:
     def __init__(self) -> None:
-        protocol = 'https' if settings.MINIO_SECURE else 'http'
+        # For AWS S3, don't use endpoint_url — let boto3 use native S3 endpoints
+        use_minio = settings.MINIO_INTERNAL_ENDPOINT and \
+                    's3.amazonaws.com' not in settings.MINIO_INTERNAL_ENDPOINT
 
-        # Internal client for backend container -> MinIO container
-        self.client = boto3.client(
-            's3',
-            endpoint_url=f'{protocol}://{settings.MINIO_INTERNAL_ENDPOINT}',
+        client_kwargs = dict(
             aws_access_key_id=settings.MINIO_ACCESS_KEY,
             aws_secret_access_key=settings.MINIO_SECRET_KEY,
             config=Config(signature_version='s3v4'),
-            region_name='us-east-1',
+            region_name=getattr(settings, 'MINIO_REGION', 'us-east-1'),
         )
 
-        # Public client only for generating browser-usable presigned URLs
-        self.public_client = boto3.client(
-            's3',
-            endpoint_url=f'{protocol}://{settings.MINIO_PUBLIC_ENDPOINT}',
+        if use_minio:
+            protocol = 'https' if settings.MINIO_SECURE else 'http'
+            client_kwargs['endpoint_url'] = f'{protocol}://{settings.MINIO_INTERNAL_ENDPOINT}'
+
+        self.client = boto3.client('s3', **client_kwargs)
+
+        public_kwargs = dict(
             aws_access_key_id=settings.MINIO_ACCESS_KEY,
             aws_secret_access_key=settings.MINIO_SECRET_KEY,
             config=Config(signature_version='s3v4'),
-            region_name='us-east-1',
+            region_name=getattr(settings, 'MINIO_REGION', 'us-east-1'),
         )
+
+        if use_minio:
+            protocol = 'https' if settings.MINIO_SECURE else 'http'
+            public_kwargs['endpoint_url'] = f'{protocol}://{settings.MINIO_PUBLIC_ENDPOINT}'
+
+        self.public_client = boto3.client('s3', **public_kwargs)
 
     def ensure_bucket(self) -> None:
         buckets = [b['Name'] for b in self.client.list_buckets().get('Buckets', [])]

@@ -99,6 +99,7 @@ class Settings(BaseSettings):
     SMTP_FROM: str = "no-reply@aipaperworkassistant.com"
     SMTP_FROM_NAME: str = "AI Paperwork Assistant"
     SMTP_STARTTLS: bool = True
+    RESEND_API_KEY: str | None = None
 
     # ── Push Notifications (Expo) ──────────────────────────────────────────
     EXPO_ACCESS_TOKEN: str | None = None

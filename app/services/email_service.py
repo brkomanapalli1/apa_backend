@@ -1,7 +1,5 @@
 from __future__ import annotations
 import logging
-import smtplib
-from email.message import EmailMessage
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -9,27 +7,30 @@ logger = logging.getLogger(__name__)
 
 class EmailService:
     def is_configured(self) -> bool:
-        return bool(settings.SMTP_HOST and settings.SMTP_FROM)
+        return bool(getattr(settings, "RESEND_API_KEY", None) and settings.SMTP_FROM)
 
     def send_email(self, *, to: str, subject: str, html: str, text: str | None = None) -> bool:
-        """Send a single email. Returns True on success."""
+        """Send a single email via Resend API. Returns True on success."""
         if not self.is_configured():
-            logger.debug("Email skipped — SMTP not configured")
+            logger.debug("Email skipped — Resend not configured")
             return False
         try:
-            msg = EmailMessage()
-            msg["From"] = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM}>"
-            msg["To"] = to
-            msg["Subject"] = subject
-            msg.set_content(text or "Please view this email in an HTML-capable client.")
-            msg.add_alternative(html, subtype="html")
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=20) as smtp:
-                if settings.SMTP_STARTTLS:
-                    smtp.starttls()
-                if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                    smtp.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                smtp.send_message(msg)
-            logger.info("Email sent to %s: %s", to, subject)
+            import resend
+            resend.api_key = settings.RESEND_API_KEY
+
+            from_address = f"{settings.SMTP_FROM_NAME} <{settings.SMTP_FROM}>"
+
+            params: dict = {
+                "from": from_address,
+                "to": [to],
+                "subject": subject,
+                "html": html,
+            }
+            if text:
+                params["text"] = text
+
+            response = resend.Emails.send(params)
+            logger.info("Email sent to %s: %s (id=%s)", to, subject, response.get("id"))
             return True
         except Exception as exc:
             logger.error("Email to %s failed: %s", to, exc)
